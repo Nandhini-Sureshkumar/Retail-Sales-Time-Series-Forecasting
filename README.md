@@ -1,6 +1,6 @@
 # 🛍️ Retail Sales – Time Series Forecasting
 
-This project performs time series analysis and forecasting on U.S. retail sales data using ARIMA, ETS, and other techniques.
+This project performs time series analysis and forecasting on U.S. retail sales data using ARIMA, ARIMAX, ETS, and other techniques.
 
 ## 📁 Structure
 
