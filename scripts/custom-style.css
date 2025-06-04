@@ -1,0 +1,49 @@
+h1.title {
+  text-align: center;
+  color: #000080; /* deep purple */
+  font-size: 36px;
+  font-weight: bold;
+}
+
+h4.author, h4.date {
+  text-align: center;
+  color: black;
+}
+
+/* Section headers */
+h2, h3,h4,h5, h6,h8,h9 {
+  color: #000080; /* deep navy */
+  font-size: 22px;
+  font-weight: normal;
+  margin-top: 30px;
+}
+
+
+body, .tocify, .tocify-item, .tocify-subheader {
+  font-family: "Georgia", serif;
+  font-size: 16px;
+}
+
+/* Optional: tighten spacing for TOC to match text feel */
+.tocify {
+  line-height: 1.6;
+  background-color: #000080; /* subtle background if you like */
+  border-radius: 5px;
+}
+
+/* Ensure active TOC item matches style */
+.tocify-item.active, .tocify-subheader.active {
+  font-weight: bold;  
+  background-color: #000080;
+}
+
+.nav-link {
+  background-color: #001a66 !important;
+  color: #87cefa !important;
+}
+
+.nav-link.active {
+  background-color: #000080 !important;
+  color: white !important;
+  font-weight: bold !important;
+}

@@ -1,0 +1,1810 @@
+---
+title: "Economic Outlook Report"
+author: "Nandhini Sureshkumar"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    highlight: tango
+    number_sections: false 
+    css: "custom-style.css"
+---
+
+```{r setup, echo=F, include=T, collapse=T}
+knitr::opts_chunk$set(comment = NA, echo=T, message = FALSE, warning = FALSE)
+options("getSymbols.warning4.0"=FALSE)
+```
+
+## Data Description
+
+For this project, I analyzed US retail sales data to explore recent trends and build forecasting models using time series techniques. The datasets were sourced from the Federal Reserve Economic Data (FRED) platform, covering multiple retail sectors from 2000 to 2024. I focused on the following retail categories:
+
+- Retail Trade and Food Services
+
+- Clothing and Accessories Stores
+
+- Furniture and Home Furnishings Stores
+
+Additional variables used to enrich the analysis include:
+
+- Consumer Price Index (CPI) from FRED, representing inflationary pressure
+
+Google Trends search interest for:
+
+- “restaurants” (for food services)
+
+- “clothing” (for apparel and accessories)
+
+- “furnish” (for furniture and furnishings)
+
+These external signals were joined to assess whether macroeconomic trends and consumer online behavior correlate with retail performance across different sectors.
+
+## Research Objective
+
+The main goal of this project is to understand and forecast retail sales behavior in the US. Specifically, I ask:
+
+- How well can we model and forecast sales for different retail sectors such as food services, clothing, and furniture?
+
+- Do external indicators like CPI or Google Trends improve forecasting accuracy, and does their impact vary by category?
+
+- Which models (ARIMA, ETS, TSLM with Fourier terms, or ARIMA with external regressors) deliver the most accurate forecasts for each retail segment?
+
+- This multi-sectoral approach allows us to identify whether modeling strategies need to be customized based on the nature of the retail category.
+
+```{r include=FALSE}
+
+rm(list = ls())
+
+options(spipen = 999)
+library(fredr)
+library(fpp3)
+library(plotly)
+library(scales)
+library(latex2exp)
+library(quantmod)
+library(patchwork)
+library(purrr)
+library(kableExtra)
+```
+
+
+## Data Extraction & Data Cleaning
+
+To begin the analysis, I collected monthly retail sales data from the Federal Reserve Economic Data (FRED) platform. This included key retail sectors: Food Services, Clothing, and Furniture. Additionally, I incorporated the Consumer Price Index (CPI) to account for inflation and Google Trends data to reflect real-time consumer interest. Specifically, I used search terms such as:
+
+- “restaurants” for Food Services,
+
+- “clothing” for Clothing, and
+
+- “furnish” for Furniture.
+
+Once imported, each dataset was cleaned and standardized. This involved formatting date fields into a consistent yearmonth format, scaling sales values to billions for readability, and converting them into tsibble structures for time series analysis. All datasets were then aligned by month to allow for proper merging and consistent modeling across variables and sectors.
+
+```{r Data_extraction, include=FALSE}
+
+
+fredr_set_key("9c0b4e09225a5896568a90948fb2eb54") 
+
+# Retrieving E-commerce sales are included in the total monthly sales estimates.
+# Retail Sales: Retail Trade and Food Services (MRTSSM44X72USN)
+us_rs_food_serv <- fredr(
+  series_id = "MRTSSM44X72USN",  
+  observation_start = as.Date("2000-01-01"),
+  observation_end = as.Date("2024-12-01")
+)
+
+us_CPI <- fredr(
+  series_id = "CPIAUCNS",  
+  observation_start = as.Date("2000-01-01"),
+  observation_end = as.Date("2024-12-01")
+)
+
+
+#Retail Sales: Clothing and Clothing Accessory Stores (MRTSSM448USN)
+us_rs_clth_acc_stores <- fredr(
+  series_id = "MRTSSM448USN",  
+  observation_start = as.Date("2000-01-01"),
+  observation_end = as.Date("2024-12-01")
+)
+
+#Retail Sales: Beer, Wine, and Liquor Stores (MRTSSM4453USN)
+us_rs_liquor_stores <- fredr(
+  series_id = "MRTSSM4453USN", 
+  observation_start = as.Date("2000-01-01"),
+  observation_end = as.Date("2024-12-01")
+)
+
+
+#Retail Sales: Food and Beverage Stores (MRTSSM445USN)
+us_rs_beverage_stores <- fredr(
+  series_id = "MRTSSM445USN", 
+  observation_start = as.Date("2000-01-01"),
+  observation_end = as.Date("2024-12-01")
+)
+
+
+#Retail Sales: Pharmacies and Drug Stores (MRTSSM44611USN)
+us_rs_drug_stores <- fredr(
+  series_id = "MRTSSM44611USN", 
+  observation_start = as.Date("2000-01-01"),
+  observation_end = as.Date("2024-12-01")
+)
+
+
+# Retail Sales: Furniture and Home Furnishings Stores (MRTSSM442USN)
+us_rs_furniture_stores <- fredr(
+  series_id = "MRTSSM442USN",  
+  observation_start = as.Date("2000-01-01"),
+  observation_end = as.Date("2024-12-01")
+)
+
+
+google_trend_restaurants <- read.csv("C:/Nandhini/SFSU MSBA/Spring 2025/ECON 855/Project/google_trend.csv")
+google_trend_clothing <- read.csv("C:/Nandhini/SFSU MSBA/Spring 2025/ECON 855/Project/google_trend_FT.csv")
+google_trend_furniture <- read.csv("C:/Nandhini/SFSU MSBA/Spring 2025/ECON 855/Project/google_trend_Furniture.csv")
+
+############### DATA Cleaning #################
+us_rs_food_serv_cleaned <- us_rs_food_serv %>%
+  mutate(Month = yearmonth(date), sales = value/1000) %>% #billion conversion
+  select(Month, sales)
+
+google_trend_restaurants_cleaned <- google_trend_restaurants %>%
+  mutate(Month = yearmonth(Month), iok_restaurants = restaurants) %>% 
+  select(Month, iok_restaurants)
+
+us_CPI_cleaned <- us_CPI %>%
+  mutate(Month = yearmonth(date), cpi = value) %>% 
+  select(Month, cpi)
+
+us_rs_clth_acc_stores_cleaned <- us_rs_clth_acc_stores %>%
+  mutate(Month = yearmonth(date), sales = value/1000) %>% 
+  select(Month, sales)
+
+google_trend_clothing_cleaned <- google_trend_clothing %>%
+  mutate(Month = yearmonth(Month), iok_clothing  = fashion_trends) %>% 
+  select(Month, iok_clothing)
+
+us_rs_furniture_stores_cleaned <- us_rs_furniture_stores %>%
+  mutate(Month = yearmonth(date), sales = value/1000) %>% 
+  select(Month, sales)
+
+
+google_trend_furniture_cleaned <- google_trend_furniture %>%
+  mutate(Month = yearmonth(Month), iok_furniture = furniture) %>% 
+  select(Month, iok_furniture)
+
+########### Arranging the data for visualization #############
+us_rs_food_serv_cleaned <- us_rs_food_serv_cleaned %>%
+  as_tsibble(index = Month)
+
+google_trend_restaurants_cleaned <- google_trend_restaurants_cleaned %>%
+  as_tsibble(index = Month)
+
+us_CPI_cleaned <- us_CPI_cleaned %>%
+  as_tsibble(index = Month)
+
+us_rs_clth_acc_stores_cleaned <- us_rs_clth_acc_stores_cleaned %>%
+  as_tsibble(index = Month)
+
+google_trend_clothing_cleaned <- google_trend_clothing_cleaned %>%
+  as_tsibble(index = Month)
+
+us_rs_furniture_stores_cleaned <- us_rs_furniture_stores_cleaned %>%
+  as_tsibble(index = Month)
+
+google_trend_furniture_cleaned <- google_trend_furniture_cleaned %>%
+  as_tsibble(index = Month)
+
+############ Seperate for each individuaL CHARTS###########
+############ STL decomposition ###############
+
+us_rs_food_serv_cleaned %>%
+  model(STL(sales)) %>%
+  components()%>%
+  autoplot()
+
+us_rs_clth_acc_stores_cleaned %>%
+  model(STL(sales)) %>%
+  components()%>%
+  autoplot()
+
+
+us_rs_furniture_stores_cleaned %>%
+  model(STL(sales)) %>%
+  components()%>%
+  autoplot()
+
+
+```
+
+
+```{r plotting_together, echo=FALSE}
+
+########## plotting together ##########
+
+combined_sales <- bind_rows(
+  us_rs_food_serv_cleaned %>% as_tibble() %>% mutate(category = "Retail Trade & Food Services"),
+  us_rs_clth_acc_stores_cleaned %>% as_tibble() %>% mutate(category = "Clothing & Accessories"),
+   us_rs_furniture_stores_cleaned %>% as_tibble() %>% mutate(category = "Furniture & Home Furnishings")
+)
+
+ggplot(combined_sales, aes(x = Month, y = sales, color = category)) +
+    geom_line() +
+  facet_grid(category ~ ., scales = "free_y")+
+  labs(title = "US Retail Sales by Category",
+      x = "Month",
+      y = "Sales (in billions)",
+      color = "Retail Category")
+
+combined_sales_ts <- combined_sales %>%
+  as_tsibble(index = Month, key = category)
+
+combined_sales_ts %>%
+  gg_season(sales) +
+  labs(title = "Seasonality in US Retail Sales by Category",
+       x = "Month",
+       y = "Sales (in billions)",
+       color = "Retail Category")
+
+combined_sales_ts %>%
+  gg_subseries(sales) +
+  labs(title = "Seasonality in US Retail Sales by Category",
+       x = "Month",
+       y = "Sales (in billions)",
+       color = "Retail Category")
+```
+
+## Visualizations and Decomposition
+
+Time plots showed clear trends and seasonality across all six categories. STL decomposition further confirmed these seasonal patterns. Most series exhibited increasing trends until around 2019–2020, with visible disruptions during COVID-19. Seasonally adjusted plots clarified the underlying trend better for modeling.
+
+Histograms were used to check skewness, and log transformations were considered, although not always helpful. For example, Furniture and Clothing series were more interpretable without log scaling.
+
+
+## {.tabset .tabset-fade .tabset-pills}
+
+### Retail Trade and Food Services
+
+
+```{r part-10.1, echo=FALSE}
+
+ 
+us_rs_food_serv_cleaned %>%
+  autoplot(sales)+
+  labs(title = "Retail Sales: Retail Trade and Food Services",
+       y="Sales (in billions)")
+
+us_rs_food_serv_cleaned %>%
+  model(STL(sales)) %>%
+  components()%>%
+  autoplot()
+
+
+dcmp <- us_rs_food_serv_cleaned %>%
+  model(STL(sales)) %>%
+  components()
+
+
+dcmp %>%
+  as_tsibble() %>%
+  autoplot(season_adjust) +
+  labs(title= "Retail Sales: Retail Trade and Food Services - Seasonally Adjusted",
+       y="Sales (in billions)")
+
+
+
+```
+
+
+#### Differeneced Data For Stationarity
+
+This section will discuss the auto-correlation, and partial auto-correlation function plots (ACF/PACF), these plots allowed for the estimation of our performed forecasts.
+
+#### First Difference (Full-Sample)
+
+
+```{r first_order, echo=FALSE}
+
+us_rs_food_serv_cleaned_trans <- us_rs_food_serv_cleaned %>%
+  mutate(sales = (sales)) 
+
+us_rs_food_serv_cleaned_trans %>%
+  gg_tsdisplay(difference(sales, 12) ,
+               plot_type='partial', lag_max = 36)+
+  labs(title="Seasonally differenced", y="")
+
+```
+
+These are also clearly non-stationary, so we take a further first difference
+
+#### Double Difference (Full-Sample)
+
+```{r second_order, echo=FALSE}
+
+us_rs_food_serv_cleaned_trans %>%
+  gg_tsdisplay(difference((sales), 12) %>%
+                 difference() ,
+               plot_type='partial', lag_max = 36)+
+  labs(title = "Double differenced", y="")
+
+```
+
+The appropriate ARIMA model based on the ACF and PACF:
+
+First Model : ARIMA(0,1,2)(0,1,1)12
+
+- The significant spike at lag 2 in the ACF suggests a non-seasonal MA(2) component.
+
+- The significant spike at lag 12 in the ACF suggests a seasonal MA(1) component.
+
+- So, we begin with an ARIMA(0,1,2)(0,1,1)12 model, indicating a first difference, a seasonal difference, and non-seasonal MA(2) and seasonal MA(1) component.
+
+Second Model : ARIMA(2,1,0)(0,1,1)12
+
+- With PACF, we may have an ARIMA(2,1,0)(0,1,1) 12 model — using the PACF to select the non-seasonal part of the model and the ACF to select the seasonal part of the model.
+
+Third Model : ARIMA(2,1,0)(1,1,0)12
+
+- The significant spike at lag 2 in the PACF suggests a non-seasonal AR(2) component.
+
+- The significant spike at lag 12 in the ACF suggests a seasonal AR(1) component.
+
+- So, an ARIMA(2,1,0)(1,1,0)12 model, indicating a first difference, a seasonal difference, and non-seasonal AR(2) and seasonal AR(1) component.
+
+
+
+### Clothing and Clothing Accessory Stores
+
+```{r part-10.a, echo=FALSE}
+
+us_rs_clth_acc_stores_cleaned %>%
+  autoplot(sales) +
+  labs(title = "Retail Sales: Clothing and Accessories Stores",
+       y = "Sales (in billions)")
+
+# STL decomposition plot
+us_rs_clth_acc_stores_cleaned %>%
+  model(STL(sales)) %>%
+  components() %>%
+  autoplot()
+
+# STL components
+dcmp_clothing <- us_rs_clth_acc_stores_cleaned %>%
+  model(STL(sales)) %>%
+  components()
+
+# seasonally adjusted series
+dcmp_clothing %>%
+  as_tsibble() %>%
+  autoplot(season_adjust) +
+  labs(title = "Retail Sales: Clothing and Accessories Stores - Seasonally Adjusted",
+       y = "Sales (in billions)")
+
+```
+
+
+
+#### Differeneced Data For Stationarity
+
+This section will discuss the auto-correlation, and partial auto-correlation function plots (ACF/PACF), these plots allowed for the estimation of our performed forecasts.
+
+#### First Difference (Full-Sample)
+
+
+```{r first_order_cloth, echo=FALSE}
+
+us_rs_clth_acc_stores_cleaned_trans <- us_rs_clth_acc_stores_cleaned %>%
+  mutate(sales = (sales)) 
+
+us_rs_clth_acc_stores_cleaned_trans %>%
+  gg_tsdisplay(difference(sales, 12) ,
+               plot_type='partial', lag_max = 36)+
+  labs(title="Seasonally differenced", y="")
+
+```
+
+These are also clearly non-stationary, so we take a further first difference
+
+#### Double Difference (Full-Sample)
+
+```{r second_order_cloth, echo=FALSE}
+
+us_rs_clth_acc_stores_cleaned_trans %>%
+  gg_tsdisplay(difference((sales), 12) %>%
+                 difference() ,
+               plot_type='partial', lag_max = 36)+
+  labs(title = "Double differenced", y="")
+
+```
+
+
+The appropriate ARIMA model based on the ACF and PACF:
+
+First Model : ARIMA(0,1,2)(0,1,1)12
+
+- The significant spike at lag 2 in the ACF suggests a non-seasonal MA(2) component.
+
+- The significant spike at lag 12 in the ACF suggests a seasonal MA(1) component.
+
+- So, we begin with an ARIMA(0,1,2)(0,1,1)12 model, indicating a first difference, a seasonal difference, and non-seasonal MA(2) and seasonal MA(1) component.
+
+Second Model : ARIMA(2,1,0)(0,1,1)12
+
+- With PACF, we may have an ARIMA(2,1,0)(0,1,1) 12 model — using the PACF to select the non-seasonal part of the model and the ACF to select the seasonal part of the model.
+
+Third Model : ARIMA(2,1,0)(1,1,0)12
+
+- The significant spike at lag 2 in the PACF suggests a non-seasonal AR(2) component.
+
+- The significant spike at lag 12 in the ACF suggests a seasonal AR(1) component.
+
+- So, an ARIMA(2,1,0)(1,1,0)12 model, indicating a first difference, a seasonal difference, and non-seasonal AR(2) and seasonal AR(1) component.
+
+
+### Furniture and Home Furnishings Stores
+
+```{r  part-10.b, echo=FALSE}
+
+us_rs_furniture_stores_cleaned %>%
+  autoplot(sales) +
+  labs(title = "Retail Sales: Furniture Stores",
+       y = "Sales (in billions)")
+
+# STL decomposition plot
+us_rs_furniture_stores_cleaned %>%
+  model(STL(sales)) %>%
+  components() %>%
+  autoplot()
+
+#  STL components
+dcmp_furniture <- us_rs_furniture_stores_cleaned %>%
+  model(STL(sales)) %>%
+  components()
+
+# seasonally adjusted series
+dcmp_furniture %>%
+  as_tsibble() %>%
+  autoplot(season_adjust) +
+  labs(title = "Retail Sales: Furniture Stores - Seasonally Adjusted",
+       y = "Sales (in billions)")
+```
+
+
+#### Differeneced Data For Stationarity
+
+This section will discuss the auto-correlation, and partial auto-correlation function plots (ACF/PACF), these plots allowed for the estimation of our performed forecasts.
+
+#### First Difference (Full-Sample)
+
+
+```{r first_order_furniture, echo=FALSE}
+
+us_rs_furniture_stores_cleaned_trans <- us_rs_furniture_stores_cleaned %>%
+  mutate(sales = (sales)) 
+
+us_rs_furniture_stores_cleaned_trans %>%
+  gg_tsdisplay(difference(sales, 12) ,
+               plot_type='partial', lag_max = 36)+
+  labs(title="Seasonally differenced", y="")
+
+```
+
+These are also clearly non-stationary, so we take a further first difference
+
+#### Double Difference (Full-Sample)
+
+```{r second_order_furniture, echo=FALSE}
+
+us_rs_furniture_stores_cleaned_trans %>%
+  gg_tsdisplay(difference((sales), 12) %>%
+                 difference() ,
+               plot_type='partial', lag_max = 36)+
+  labs(title = "Double differenced", y="")
+
+```
+
+
+The appropriate ARIMA model based on the ACF and PACF:
+
+First Model : ARIMA(0,1,2)(0,1,1)12
+
+- The significant spike at lag 2 in the ACF suggests a non-seasonal MA(2) component.
+
+- The significant spike at lag 12 in the ACF suggests a seasonal MA(1) component.
+
+- So, we begin with an ARIMA(0,1,2)(0,1,1)12 model, indicating a first difference, a seasonal difference, and non-seasonal MA(2) and seasonal MA(1) component.
+
+Second Model : ARIMA(2,1,0)(0,1,1)12
+
+- With PACF, we may have an ARIMA(2,1,0)(0,1,1) 12 model — using the PACF to select the non-seasonal part of the model and the ACF to select the seasonal part of the model.
+
+Third Model : ARIMA(2,1,0)(1,1,0)12
+
+- The significant spike at lag 2 in the PACF suggests a non-seasonal AR(2) component.
+
+- The significant spike at lag 12 in the ACF suggests a seasonal AR(1) component.
+
+- So, an ARIMA(2,1,0)(1,1,0)12 model, indicating a first difference, a seasonal difference, and non-seasonal AR(2) and seasonal AR(1) component.
+
+
+
+## Model Building
+
+## {.tabset .tabset-fade .tabset-pills}
+
+### Retail Trade and Food Services
+
+#### Train - Test Split
+
+I split the dataset into training and test sets. All data before January 2022 was used for training, while data from January 2022 onwards was reserved for testing. This setup allows for an honest evaluation of the forecasting models’ ability to generalize.
+
+I also visualized the training data across the three variables to observe any discrepancies in trends and seasonality, which helped validate the relationships among these features before fitting time series models.
+
+```{r part-11.1, echo=FALSE}
+
+ 
+###########Train Test split ###################
+us_food_cpi_joined <- left_join(
+  us_rs_food_serv_cleaned,
+  us_CPI_cleaned,
+  by = "Month"
+)
+
+us_food_gtr_joined <- left_join(
+  us_food_cpi_joined,
+  google_trend_restaurants_cleaned,
+  by = "Month"
+)
+
+
+us_rs_food_serv_train <- us_food_gtr_joined %>%
+  filter(Month < yearmonth("2022-01-01"))
+
+us_rs_food_serv_test <- us_food_gtr_joined %>%
+  filter(Month >= yearmonth("2022-01-01"))
+
+
+
+us_rs_food_serv_train %>%
+  pivot_longer(-Month) %>%
+  mutate(name = recode(name,
+                       cpi = "Consumer Price Index (CPI)",
+                       iok_restaurants = 'Google Search Trend: "restaurants"',
+                       sales = "Retail Sales: Food Services and Retail Trade")) |>
+  ggplot(aes(x = Month, y = value, colour = name)) +
+  geom_line() +
+  facet_grid(name ~ ., scales = "free_y") +
+  labs(title = "Retail Indicators Over Time",
+       y = "Value", x = "Month", colour = "Indicator")
+
+```
+
+Consumer Price Index (CPI) shows a steady and consistent upward trend from 2000 to 2024, reflecting ongoing inflation over the years.
+
+Google Trends for “restaurants” spikes notably after 2015, peaking around 2021, then fluctuating—likely impacted by pandemic recovery patterns and changing consumer behaviors very similar to sales.
+
+Retail Sales exhibit strong seasonality with an upward trend, sharply rising after pandemic.
+
+#### Model Fitting
+
+```{r part-11.2, echo=FALSE}
+
+us_rs_food_serv_fit <- us_rs_food_serv_train%>%
+  model(
+        fourier6 = TSLM(sales ~ trend() + fourier(K = 6)),
+        ets = ETS(sales),
+        arima012011 = ARIMA(sales ~ pdq(0,1,2) + PDQ(0,1,1) ),
+        arima210011 = ARIMA(sales ~ pdq(2,1,0) + PDQ(0,1,1)),
+        arima210110 = ARIMA(sales ~ pdq(2,1,0) + PDQ(1,1,0)),
+        stepwise = ARIMA(sales),
+        arima1 = ARIMA(sales, stepwise=FALSE, approx = FALSE),
+        arima_cpi = ARIMA(sales ~ cpi ),
+        arima_google = ARIMA(sales ~ iok_restaurants ),
+        arima_fourier6 = ARIMA(sales ~ fourier(K=6) + PDQ(0,0,0)),
+       # stlf = STLF
+    )
+
+us_rs_food_serv_fit |> pivot_longer(everything(), names_to = "Model name",
+                    values_to = "Orders")
+```
+
+#### {.tabset .tabset-fade .tabset-pills} 
+
+##### AIC Comparison
+
+```{r model_food, echo=FALSE}
+
+
+############### AIC #################
+glance(us_rs_food_serv_fit) |> arrange(AICc) |> 
+  select(.model:BIC,-r_squared,-adj_r_squared, -statistic, -p_value, -df)
+
+```
+
+I fitted multiple models including ARIMA variants, Fourier-based regression, ETS, and models with external regressors like CPI and Google Trends ("restaurants"). Then I compared them using AICc to find the best fit.
+
+From the table, arima_google came out as the best model with the lowest AICc (1599). This shows that incorporating Google Trends data gives the best forecasting performance.
+
+The fourier6 model also performed decently, better than most traditional ARIMA setups but not as good as arima_google.
+
+arima_cpi did better than plain ARIMA, showing CPI has some predictive value, but still not close to Google Trends.
+
+ETS had the worst AICc by far, meaning it didn't capture the data patterns well, possibly due to its limitations with complex seasonality and external inputs.
+
+Overall using Google Trends as a regressor significantly improves model accuracy. It’s a strong indicator for food-related retail sales, more effective than CPI or seasonal patterns alone.
+
+###### Forecasts: Top 6 Models Ranked by AICc
+
+```{r model_food_forecast, echo=FALSE}
+
+# Step 1: Extract top 6 models by AICc
+top_models_ordered <- glance(us_rs_food_serv_fit) %>%
+  arrange(AICc) %>%
+  slice(1:6) %>%
+  pull(.model)
+
+# Step 2: Forecast 3 years ahead and plot
+forecast_data <- us_rs_food_serv_fit %>%
+  select(all_of(top_models_ordered)) %>%
+  forecast(new_data = us_rs_food_serv_test) %>%
+  mutate(.model = factor(.model, levels = top_models_ordered))
+
+forecast_data %>%
+  autoplot(us_rs_food_serv_cleaned, level = 95) +
+  facet_wrap(vars(.model), ncol = 2) +
+  guides(colour = "none", fill = "none", level = "none") +
+  geom_label(
+    aes(
+      x = yearmonth("2018 Jan"),  # <-- Move label to the left
+      y = max(us_rs_food_serv_cleaned$sales, na.rm = TRUE),
+      label = paste0("AICc = ", round(AICc, 1))
+    ),
+    data = glance(us_rs_food_serv_fit) %>%
+      filter(.model %in% top_models_ordered) %>%
+      mutate(.model = factor(.model, levels = top_models_ordered))
+  )
+
+```
+
+
+##### Training Data RMSE
+
+```{r model_food_rmse, echo=FALSE}
+
+
+############### RMSE #################
+us_rs_food_serv_fit  %>% 
+  accuracy() %>%
+  filter(!is.nan(RMSE)) %>%
+  select(-ME, -MPE, -ACF1,-MASE, -RMSSE) %>%
+  arrange(RMSE)
+
+```
+
+I evaluated all models based on training RMSE to compare how well they fit the historical data.
+
+arima_cpi performed the best with the lowest RMSE of 11.1, followed closely by arima_google (11.4) and arima1 (11.5). This suggests both CPI and Google Trends are strong predictors of sales, with CPI doing slightly better on training data.
+
+The basic ARIMA models (arima012011, arima210011, arima210310) had higher RMSEs, showing that adding external regressors or using a non-stepwise full ARIMA search improves fit.
+
+The fourier6 model had the worst RMSE (25.5), indicating that trend + seasonality alone isn’t enough for this dataset. ETS surprisingly had a decent RMSE (11.9), though its AIC was high earlier — it fits okay but isn't the most efficient.
+
+Overall, models with external features (CPI, GOOGLE Trend) outperformed other time series models, highlighting the value of incorporating real-world signals for forecasting accuracy.
+
+###### Forecasts: Top 6 Models Ranked by Training Data RMSE
+
+```{r model_food_forecast_rmse, echo=FALSE}
+
+########### forecast based on Training RMSE #########
+
+# Step 1: Extracted top 6 models based on training RMSE
+top_models_rmse <- us_rs_food_serv_fit %>%
+  accuracy() %>%
+  filter(.type == "Training", !is.nan(RMSE)) %>%
+  arrange(RMSE) %>%
+  slice(1:6) %>%
+  pull(.model)
+
+# Step 2: Got RMSE and AICc values for labels
+label_data <- glance(us_rs_food_serv_fit) %>%
+  filter(.model %in% top_models_rmse) %>%
+  left_join(
+    us_rs_food_serv_fit %>%
+      accuracy() %>%
+      filter(.type == "Training") %>%
+      select(.model, RMSE),
+    by = ".model"
+  ) %>%
+  mutate(
+    .model = factor(.model, levels = top_models_rmse),
+    label_text = paste0("AICc = ", round(AICc, 1), "\nRMSE = ", round(RMSE, 1))
+  )
+
+# Step 3: Forecast and reordered for plotting
+forecast_data <- us_rs_food_serv_fit %>%
+  select(all_of(top_models_rmse)) %>%
+  forecast(new_data = us_rs_food_serv_test) %>%
+  mutate(.model = factor(.model, levels = top_models_rmse))
+
+
+
+# Step 4: Final plot
+forecast_data %>%
+  autoplot(us_rs_food_serv_cleaned, level = 95) +
+  facet_wrap(vars(.model), ncol = 2) +
+  guides(colour = "none", fill = "none", level = "none") +
+  geom_label(
+    data = label_data,
+    aes(
+      x = min(us_rs_food_serv_cleaned$Month),  # Far left
+      y = max(us_rs_food_serv_cleaned$sales, na.rm = TRUE) * 0.98,  # Near top
+      label = label_text
+    ),
+    inherit.aes = FALSE,
+    size = 3.5,
+    hjust = 0  # Align left within the label box
+  )
+
+```
+
+
+##### Test Data RMSE
+
+```{r model_food_rmse_test, echo=FALSE}
+
+
+############# Test Set ###############
+bind_rows(
+  us_rs_food_serv_fit %>%
+    select(-arima_cpi, -arima_google) %>%   
+    forecast(h = "3 years") %>%
+    accuracy(us_rs_food_serv_test) %>%
+    filter(!is.nan(RMSE)) 
+  ,
+  us_rs_food_serv_fit %>%
+    select(arima_cpi, arima_google) %>%   
+    forecast(new_data = us_rs_food_serv_test) %>%
+    accuracy(us_rs_food_serv_test) %>%
+    filter(!is.nan(RMSE)) 
+)%>%
+  select(.model, .type, RMSE, MAE, MAPE) %>%
+  arrange(RMSE)
+
+```
+
+I evaluated model performance on the test set (2022–2024) using RMSE.
+
+arima_google clearly performed the best with a test RMSE of 14.2, indicating that Google Trends data on restaurant activity is highly predictive of retail sales. The next best models were arima012011 and arima210011 (both RMSE ~15.6), showing that classical ARIMA also works well, but not as well as ARIMA with external regressors.
+
+Interestingly, arima_cpi did well on training data but had the worst test RMSE (63.3) — suggesting it may have overfit historical CPI patterns that didn’t hold in recent years.
+
+fourier6 and ets also had high test RMSEs (125 and 40.1 respectively), confirming they failed to generalize well.
+
+Overall arima_google and arima are the most robust models across both training and test performance. Models with relevant external signals (like online behavior) generalize better than models relying only on time series patterns.
+
+###### Forecasts: Top 6 Models Ranked by Test Data RMSE
+
+```{r model_food_forecast_rmse_test, echo=FALSE}
+
+
+#  Top 6 models by test RMSE
+test_accuracy <- bind_rows(
+  us_rs_food_serv_fit %>%
+    select(-arima_cpi, -arima_google) %>%   
+    forecast(h = "3 years") %>%
+    accuracy(us_rs_food_serv_test) %>%
+    filter(!is.nan(RMSE)),
+  us_rs_food_serv_fit %>%
+    select(arima_cpi, arima_google) %>%   
+    forecast(new_data = us_rs_food_serv_test) %>%
+    accuracy(us_rs_food_serv_test) %>%
+    filter(!is.nan(RMSE))
+)
+
+top_rmse_models <- test_accuracy %>%
+  select(.model, RMSE) %>%
+  arrange(RMSE) %>%
+  slice(1:6) %>%
+  pull(.model)
+
+#  Forecast and plot
+forecast_data <- us_rs_food_serv_fit %>%
+  select(all_of(top_rmse_models)) %>%
+  forecast(new_data = us_rs_food_serv_test) %>%
+  mutate(.model = factor(.model, levels = top_rmse_models))
+
+#  AICc values
+aic_labels <- glance(us_rs_food_serv_fit) %>%
+  filter(.model %in% top_rmse_models) %>%
+  select(.model, AICc)
+
+# Merged RMSE with AICc for annotation
+labels_df <- test_accuracy %>%
+  filter(.model %in% top_rmse_models) %>%
+  left_join(aic_labels, by = ".model") %>%
+  left_join(
+    us_rs_food_serv_fit %>%
+      accuracy() %>%
+      filter(.type == "Training") %>%
+      select(.model, train_RMSE = RMSE),
+    by = ".model"
+  ) %>%
+  mutate(
+    .model = factor(.model, levels = top_rmse_models),
+    label_text = paste0("AICc = ", round(AICc, 1),
+                        "\nTrain RMSE = ", round(train_RMSE, 1),
+                        "\nTest RMSE = ", round(RMSE, 1))
+  )
+
+# Step 3: Plot
+forecast_data %>%
+  autoplot(us_rs_food_serv_cleaned, level = 95) +
+  facet_wrap(vars(.model), ncol = 2) +
+  guides(colour = "none", fill = "none", level = "none") +
+  geom_label(
+    data = labels_df,
+    aes(
+      x = yearmonth("2001 Jan"),  # moved far left
+      y = max(us_rs_food_serv_cleaned$sales, na.rm = TRUE),  # top
+      label  = label_text
+    ),
+    inherit.aes = FALSE,
+    hjust = 0,
+    vjust = 1,   # top alignment
+    size = 3
+  ) +
+  labs(
+    title = "3-Year Forecast: Top 6 Models by Test RMSE",
+    y = "Sales (in billions)",
+    x = "Month"
+  )
+
+```
+
+#### Evaluation of ARIMA Models with and without Google Trends
+
+To visualize how the leading models behave in practice, I generated forecasts from the top two performers based on Test RMSE — arima_google and arima1. These were not selected to compete, but to provide a clearer picture of how well each model captures retail sales patterns. I also assessed their residuals and Ljung-Box statistics to confirm model adequacy.
+
+```{r model_food_final_model, echo=FALSE}
+
+# clearly arima_google trend seems to be a better model with low AICc, and Training and Test RMSE
+
+#######################
+
+us_rs_food_serv_fcst_arima <- us_rs_food_serv_fit %>% 
+  select(arima_google) %>%
+  forecast(new_data = us_rs_food_serv_test) 
+  
+
+autoplot(us_rs_food_serv_fcst_arima) +
+  autolayer(us_rs_food_serv_cleaned_trans) +
+  labs(
+    title = "Retail Sales Forecast with ARIMA - Google Trends on Restaurant Activity",
+    y = "Sales (in billions)", x = "Month"
+  )
+
+us_rs_food_serv_fcst_arima1 <- us_rs_food_serv_fit %>% 
+  select(arima1) %>%
+  forecast(h = "3 years") 
+
+
+autoplot(us_rs_food_serv_fcst_arima1) +
+  autolayer(us_rs_food_serv_cleaned_trans) +
+  labs(
+    title = "Retail Sales Forecast with ARIMA",
+    y = "Sales (in billions)", x = "Month"
+  )
+
+#########residual analysis###########
+
+us_rs_food_serv_fit |> select(arima_google) |> gg_tsresiduals(lag=36)+
+  ggtitle("Residual Plots for Retail Sales Forecast with ARIMA - Google Trends on Restaurant Activity")
+
+us_rs_food_serv_fit |> select(arima1) |> gg_tsresiduals(lag=36)+
+  ggtitle("Residual Plots for Retail Sales Forecast with ARIMA")
+
+#########forecast###########
+bind_rows(
+  us_rs_food_serv_fit %>% select(arima_google) %>%  accuracy(),
+  us_rs_food_serv_fit %>% select(arima1) %>%  accuracy(),
+  us_rs_food_serv_fit %>% select(arima_google) %>% forecast(new_data = us_rs_food_serv_test) %>% accuracy(us_rs_food_serv_test),
+  us_rs_food_serv_fit %>% select(arima1) %>% forecast(h = "3 years") %>% accuracy(us_rs_food_serv_test)
+) %>%
+  select(-ME, -MPE, -ACF1,-MASE, -RMSSE)
+
+
+#########ljung_box###########
+
+bind_rows(
+  augment(us_rs_food_serv_fit %>% select(arima_google)) |> features(.innov, ljung_box, lag = 8),
+  augment(us_rs_food_serv_fit %>% select(arima1)) |> features(.innov, ljung_box, dof = 3, lag = 8)
+)
+
+```
+
+Both models passed key residual diagnostics:
+
+- Residuals from arima_google show a few spikes but are mostly centered around zero, while those from arima1 are consistently centered with no clear patterns—both indicating a good model fit.
+
+- Autocorrelation (ACF) plots show most spikes within the 95% confidence bounds, indicating no significant autocorrelation left in the residuals.
+
+- Histograms of residuals are approximately bell-shaped, supporting the assumption of normality.
+
+- Ljung-Box test (lag = 8) confirms that residuals behave like white noise for both models:
+
+- arima_google: p = 0.17
+
+- arima1: p = 0.239
+
+- The large p-value confirms that the residuals are similar to white noise.
+
+However, arima_google outperforms arima1 on both training and test RMSE. It also incorporates external Google Trends data, which seems to improve its predictive power. Thus, arima_google is the preferred model overall.
+
+
+### Clothing and Clothing Accessory Stores
+
+#### Train - Test Split
+
+I split the dataset into training and test sets. All data before January 2022 was used for training, while data from January 2022 onwards was reserved for testing. This setup allows for an honest evaluation of the forecasting models’ ability to generalize.
+
+I also visualized the training data across the three variables to observe any discrepancies in trends and seasonality, which helped validate the relationships among these features before fitting time series models.
+
+
+```{r part-12.1, echo=FALSE}
+
+ 
+########### Train Test split ###################
+
+# Join datasets
+us_clth_cpi_joined <- left_join(
+  us_rs_clth_acc_stores_cleaned,
+  us_CPI_cleaned,
+  by = "Month"
+)
+
+us_clth_gtr_joined <- left_join(
+  us_clth_cpi_joined,
+  google_trend_clothing_cleaned,
+  by = "Month"
+)
+
+# Train/test split
+us_rs_clth_acc_train <- us_clth_gtr_joined %>%
+  filter(Month < yearmonth("2022-01-01"))
+
+us_rs_clth_acc_test <- us_clth_gtr_joined %>%
+  filter(Month >= yearmonth("2022-01-01"))
+
+# Visualization
+us_rs_clth_acc_train %>%
+  pivot_longer(-Month) %>%
+  mutate(name = recode(name,
+                       cpi = "Consumer Price Index (CPI)",
+                       iok_clothing = 'Google Search Trend: "clothing"',
+                       sales = "Retail Sales: Clothing and Accessories")) |>
+  ggplot(aes(x = Month, y = value, colour = name)) +
+  geom_line() +
+  facet_grid(name ~ ., scales = "free_y") +
+  labs(title = "Retail Indicators Over Time - Clothing and Accessories",
+       y = "Value", x = "Month", colour = "Indicator")
+
+```
+
+Consumer Price Index (CPI) continues to increase steadily from 2000 to 2024, consistent with long-term inflation trends and affecting clothing prices over time.
+
+Google Trends for “clothing” shows seasonal spikes around holiday periods, with a noticeable dip during the 2020 pandemic and recovery afterward—mirroring temporary disruptions and shifts to online shopping behavior.
+
+Retail Sales for Clothing and Accessories Stores display strong seasonality and a generally upward trend, with a sharp decline in 2020 due to COVID-19, followed by a recovery and continued growth post-pandemic.
+
+#### Model Fitting
+
+```{r part-12.2_cloth, echo=FALSE}
+
+us_rs_clth_acc_fit <- us_rs_clth_acc_train %>%
+  model(
+    fourier6 = TSLM(sales ~ trend() + fourier(K = 6)),
+    ets = ETS(sales),
+    arima012011 = ARIMA(sales ~ pdq(0,1,2) + PDQ(0,1,1)),
+    arima210011 = ARIMA(sales ~ pdq(2,1,0) + PDQ(0,1,1)),
+    arima210110 = ARIMA(sales ~ pdq(2,1,0) + PDQ(1,1,0)),
+    stepwise = ARIMA(sales),
+    arima1 = ARIMA(sales, stepwise = FALSE, approx = FALSE),
+    arima_cpi = ARIMA(sales ~ cpi),
+    arima_google = ARIMA(sales ~ iok_clothing),  # Replace if your column name differs
+    arima_fourier6 = ARIMA(sales ~ fourier(K = 6) + PDQ(0,0,0))
+  )
+
+us_rs_clth_acc_fit |> 
+  pivot_longer(everything(), names_to = "Model name", values_to = "Orders")
+
+
+
+```
+
+#### {.tabset .tabset-fade .tabset-pills} 
+
+##### AIC Comparison
+
+```{r model_cloth, echo=FALSE}
+
+
+############### AIC - Clothing and Accessories #################
+glance(us_rs_clth_acc_fit) |> 
+  arrange(AICc) |> 
+  select(.model:BIC, -r_squared, -adj_r_squared, -statistic, -p_value, -df)
+
+```
+
+I fitted multiple models including traditional ARIMA variants, Fourier-based seasonal regression (fourier6), exponential smoothing (ETS), and ARIMA models incorporating external regressors like the Consumer Price Index (CPI) and Google Trends for the keyword "clothing".
+
+From the model comparison table:
+
+- arima_google achieved the lowest AICc (743.5), making it the most statistically efficient model. This highlights that incorporating Google Trends data related to clothing retail significantly improves forecasting performance.
+
+- arima_cpi followed closely with a slightly higher AICc (852.2), indicating that macroeconomic indicators like CPI have some predictive power, although not as strong as real-time behavioral data.
+
+- Among the classical models, arima1, stepwise, and arima012011 performed moderately well but were outperformed by models that include external regressors.
+
+- fourier6 and arima_fourier6 had higher AICc values, suggesting that modeling seasonality and trend alone without external signals wasn’t sufficient.
+
+- ETS had the highest AICc (1649.2), confirming it was the least effective at capturing the complexity in clothing sales data.
+
+Including Google Trends for “clothing” as a regressor significantly improves model performance, outperforming both CPI-based and traditional ARIMA models. This mirrors findings from the food services analysis and suggests that consumer search behavior is a strong leading indicator for clothing retail sales.
+
+###### Forecasts: Top 6 Models Ranked by AICc
+
+```{r model_cloth_forecast, echo=FALSE}
+
+# Step 1: Extract top 6 models by AICc
+top_models_clth <- glance(us_rs_clth_acc_fit) %>%
+  arrange(AICc) %>%
+  slice(1:6) %>%
+  pull(.model)
+
+# Step 2: Forecast and plot
+forecast_clth <- us_rs_clth_acc_fit %>%
+  select(all_of(top_models_clth)) %>%
+  forecast(new_data = us_rs_clth_acc_test) %>%
+  mutate(.model = factor(.model, levels = top_models_clth))
+
+forecast_clth %>%
+  autoplot(us_rs_clth_acc_stores_cleaned_trans, level = 95) +
+  facet_wrap(vars(.model), ncol = 2) +
+  guides(colour = "none", fill = "none", level = "none") +
+  geom_label(
+    aes(
+      x = yearmonth("2018 Jan"),
+      y = max(us_rs_clth_acc_stores_cleaned_trans$sales, na.rm = TRUE),
+      label = paste0("AICc = ", round(AICc, 1))
+    ),
+    data = glance(us_rs_clth_acc_fit) %>%
+      filter(.model %in% top_models_clth) %>%
+      mutate(.model = factor(.model, levels = top_models_clth))
+  )
+
+```
+
+
+##### Training Data RMSE
+
+```{r model_cloth_rmse, echo=FALSE}
+
+
+############### RMSE - Clothing and Accessories #################
+us_rs_clth_acc_fit %>% 
+  accuracy() %>%
+  filter(!is.nan(RMSE)) %>%
+  select(-ME, -MPE, -ACF1, -MASE, -RMSSE) %>%
+  arrange(RMSE)
+
+```
+
+I evaluated all models based on their training RMSE to assess how well they fit the historical sales data for clothing and accessory retail.
+
+- arima_cpi performed the best with the lowest RMSE (1.21), suggesting that macroeconomic trends like inflation (CPI) are strongly predictive of retail clothing sales.
+
+- Close behind were arima1 (RMSE = 1.22) and arima_fourier6 (RMSE = 1.23), both indicating that flexible ARIMA structures and seasonal adjustments provide solid baseline forecasts even without external regressors.
+
+- Models like stepwise, arima012011, and arima210011 also delivered competitive RMSEs (~1.24–1.30), reinforcing that classic ARIMA configurations still hold value for this sector.
+
+- Surprisingly, arima_google had a higher RMSE (1.39) than CPI-based or traditional ARIMA models. This suggests that Google Trends for "clothing stores" may not be as tightly aligned with retail clothing sales as expected—possibly due to broader or noisier consumer search behavior.
+
+- The fourier6 model had the worst RMSE (1.94), indicating that seasonality and trend alone do not capture the complexities of clothing retail dynamics.
+
+Unlike the food services category, where Google Trends was highly effective, in the clothing sector, CPI appears to be the most useful external signal. This could be because clothing purchases are more price-sensitive and influenced by macroeconomic factors than by immediate consumer search behavior.
+
+Incorporating economic indicators like CPI significantly enhances forecasting accuracy, outperforming Google Trends and purely seasonal models.
+
+###### Forecasts: Top 6 Models Ranked by Training Data RMSE
+
+```{r model_cloth_forecast_rmse, echo=FALSE}
+
+########### Forecast Based on Training RMSE - Clothing and Accessories #########
+
+# Step 1: Top 6 models based on training RMSE
+top_models_rmse_clth <- us_rs_clth_acc_fit %>%
+  accuracy() %>%
+  filter(.type == "Training", !is.nan(RMSE)) %>%
+  arrange(RMSE) %>%
+  slice(1:6) %>%
+  pull(.model)
+
+# Step 2: Combine AICc and RMSE for labels
+label_data_clth <- glance(us_rs_clth_acc_fit) %>%
+  filter(.model %in% top_models_rmse_clth) %>%
+  left_join(
+    us_rs_clth_acc_fit %>%
+      accuracy() %>%
+      filter(.type == "Training") %>%
+      select(.model, RMSE),
+    by = ".model"
+  ) %>%
+  mutate(
+    .model = factor(.model, levels = top_models_rmse_clth),
+    label_text = paste0("AICc = ", round(AICc, 1), "\nRMSE = ", round(RMSE, 1))
+  )
+
+# Step 3: Forecast and reorder
+forecast_data_clth <- us_rs_clth_acc_fit %>%
+  select(all_of(top_models_rmse_clth)) %>%
+  forecast(new_data = us_rs_clth_acc_test) %>%
+  mutate(.model = factor(.model, levels = top_models_rmse_clth))
+
+# Step 4: Final plot
+forecast_data_clth %>%
+  autoplot(us_rs_clth_acc_stores_cleaned_trans, level = 95) +
+  facet_wrap(vars(.model), ncol = 2) +
+  guides(colour = "none", fill = "none", level = "none") +
+  geom_label(
+    data = label_data_clth,
+    aes(
+      x = min(us_rs_clth_acc_stores_cleaned_trans$Month),
+      y = max(us_rs_clth_acc_stores_cleaned_trans$sales, na.rm = TRUE) * 0.98,
+      label = label_text
+    ),
+    inherit.aes = FALSE,
+    size = 3.5,
+    hjust = 0
+  )
+
+```
+
+
+##### Test Data RMSE
+
+```{r model_cloth_rmse_test, echo=FALSE}
+
+############# Test Set - Clothing and Accessories ###############
+
+bind_rows(
+  us_rs_clth_acc_fit %>%
+    select(-arima_cpi, -arima_google) %>%
+    forecast(h = "3 years") %>%
+    accuracy(us_rs_clth_acc_test) %>%
+    filter(!is.nan(RMSE)),
+
+  us_rs_clth_acc_fit %>%
+    select(arima_cpi, arima_google) %>%
+    forecast(new_data = us_rs_clth_acc_test) %>%
+    accuracy(us_rs_clth_acc_test) %>%
+    filter(!is.nan(RMSE))
+) %>%
+  select(.model, .type, RMSE, MAE, MAPE) %>%
+  arrange(RMSE)
+
+```
+
+I evaluated model performance on the test set (2022–2024) using RMSE to assess how well each model generalizes to unseen data.
+
+- arima_fourier6 emerged as the best performer with the lowest test RMSE of 1.70, showing that combining Fourier terms with ARIMA can effectively capture both trend and seasonal patterns in clothing retail sales.
+
+- Close contenders included ets (RMSE = 1.91) and arima012011 (RMSE = 1.94), indicating that both exponential smoothing and classic ARIMA structures still offer solid predictive performance for this category.
+
+- arima1, which performed well in training, had a slightly higher test RMSE of 2.01, suggesting it generalizes decently but is slightly less robust than Fourier-based or smoother ETS models.
+
+- The basic fourier6 model (RMSE = 2.17) and stepwise ARIMA (RMSE = 2.20) were slightly weaker, likely due to limitations in capturing complex patterns without strong exogenous signals.
+
+- Models like arima210011 and arima210110 had poorer performance (RMSE ~2.25–3.97), possibly due to overfitting or misaligned lag structures.
+
+- Notably, arima_google and arima_cpi performed the worst, with RMSEs of 4.22 and 6.33 respectively. This suggests that Google Trends and CPI were not reliable predictors of test-period clothing sales—highlighting a key contrast to the food services domain where such signals worked well.
+
+###### Forecasts: Top 6 Models Ranked by Test Data RMSE
+
+```{r model_cloth_forecast_rmse_test, echo=FALSE}
+
+# Top 6 models by test RMSE - Clothing
+test_accuracy_clth <- bind_rows(
+  us_rs_clth_acc_fit %>%
+    select(-arima_cpi, -arima_google) %>%   
+    forecast(h = "3 years") %>%
+    accuracy(us_rs_clth_acc_test) %>%
+    filter(!is.nan(RMSE)),
+  us_rs_clth_acc_fit %>%
+    select(arima_cpi, arima_google) %>%   
+    forecast(new_data = us_rs_clth_acc_test) %>%
+    accuracy(us_rs_clth_acc_test) %>%
+    filter(!is.nan(RMSE))
+)
+
+top_rmse_models_clth <- test_accuracy_clth %>%
+  select(.model, RMSE) %>%
+  arrange(RMSE) %>%
+  slice(1:6) %>%
+  pull(.model)
+
+forecast_data_clth <- us_rs_clth_acc_fit %>%
+  select(all_of(top_rmse_models_clth)) %>%
+  forecast(new_data = us_rs_clth_acc_test) %>%
+  mutate(.model = factor(.model, levels = top_rmse_models_clth))
+
+aic_labels_clth <- glance(us_rs_clth_acc_fit) %>%
+  filter(.model %in% top_rmse_models_clth) %>%
+  select(.model, AICc)
+
+labels_df_clth <- test_accuracy_clth %>%
+  filter(.model %in% top_rmse_models_clth) %>%
+  left_join(aic_labels_clth, by = ".model") %>%
+  left_join(
+    us_rs_clth_acc_fit %>%
+      accuracy() %>%
+      filter(.type == "Training") %>%
+      select(.model, train_RMSE = RMSE),
+    by = ".model"
+  ) %>%
+  mutate(
+    .model = factor(.model, levels = top_rmse_models_clth),
+    label_text = paste0("AICc = ", round(AICc, 1),
+                        "\nTrain RMSE = ", round(train_RMSE, 1),
+                        "\nTest RMSE = ", round(RMSE, 1))
+  )
+
+forecast_data_clth %>%
+  autoplot(us_rs_clth_acc_stores_cleaned_trans, level = 95) +
+  facet_wrap(vars(.model), ncol = 2) +
+  guides(colour = "none", fill = "none", level = "none") +
+  geom_label(
+    data = labels_df_clth,
+    aes(
+      x = yearmonth("2001 Jan"),
+      y = max(us_rs_clth_acc_stores_cleaned_trans$sales, na.rm = TRUE),
+      label = label_text
+    ),
+    inherit.aes = FALSE,
+    hjust = 0,
+    vjust = 1,
+    size = 3
+  ) +
+  labs(
+    title = "3-Year Forecast: Top 6 Models by Test RMSE (Clothing Sector)",
+    y = "Sales (in billions)",
+    x = "Month"
+  )
+
+```
+
+#### Evaluation of ARIMA Models with and without Google Trends
+
+To visualize how the leading models behave in practice, I generated forecasts from the top two performers based on Test RMSE — arima_google and arima1. These were not selected to compete, but to provide a clearer picture of how well each model captures retail sales patterns. I also assessed their residuals and Ljung-Box statistics to confirm model adequacy.
+
+```{r model_cloth_final_model, echo=FALSE}
+
+# clearly arima_fourier6 trend seems to be a better model with low AICc, and Training and Test RMSE
+
+# Forecast using ARIMA with Fourier
+us_rs_clth_acc_fcst_arima_fourier6 <- us_rs_clth_acc_fit %>% 
+  select(arima_fourier6) %>%
+  forecast(new_data = us_rs_clth_acc_test)
+
+autoplot(us_rs_clth_acc_fcst_arima_fourier6) +
+  autolayer(us_rs_clth_acc_stores_cleaned_trans) +
+  labs(
+    title = "Retail Sales Forecast (Clothing) with ARIMA - Fourier",
+    y = "Sales (in billions)", x = "Month"
+  )
+
+# Forecast using full ARIMA model
+us_rs_clth_acc_fcst_arima1 <- us_rs_clth_acc_fit %>% 
+  select(arima1) %>%
+  forecast(h = "3 years")
+
+autoplot(us_rs_clth_acc_fcst_arima1) +
+  autolayer(us_rs_clth_acc_stores_cleaned_trans) +
+  labs(
+    title = "Retail Sales Forecast (Clothing) with ARIMA",
+    y = "Sales (in billions)", x = "Month"
+  )
+
+# Residual plots
+us_rs_clth_acc_fit |> select(arima_fourier6) |> gg_tsresiduals(lag = 36) +
+  ggtitle("Residuals: Clothing Sales ARIMA - Fourier")
+
+us_rs_clth_acc_fit |> select(arima1) |> gg_tsresiduals(lag = 36) +
+  ggtitle("Residuals: Clothing Sales ARIMA")
+
+# Forecast accuracy
+bind_rows(
+  us_rs_clth_acc_fit %>% select(arima_fourier6) %>% accuracy(),
+  us_rs_clth_acc_fit %>% select(arima1) %>% accuracy(),
+  us_rs_clth_acc_fit %>% select(arima_fourier6) %>% forecast(new_data = us_rs_clth_acc_test) %>% accuracy(us_rs_clth_acc_test),
+  us_rs_clth_acc_fit %>% select(arima1) %>% forecast(h = "3 years") %>% accuracy(us_rs_clth_acc_test)
+) %>%
+  select(-ME, -MPE, -ACF1, -MASE, -RMSSE)
+
+# Ljung-Box test
+bind_rows(
+  augment(us_rs_clth_acc_fit %>% select(arima_fourier6)) |> features(.innov, ljung_box, lag = 8),
+  augment(us_rs_clth_acc_fit %>% select(arima1)) |> features(.innov, ljung_box, dof = 3, lag = 8)
+)
+
+```
+
+To assess the reliability of the top two clothing sales forecasting models arima1 (standard ARIMA) and arima_fourier6 (ARIMA with Fourier terms capturing seasonality), I examined their residual behavior and conducted Ljung-Box tests.
+
+Residual Behavior:
+
+- Both models show residuals centered around zero, indicating unbiased forecasts.
+
+- The arima_fourier6 model exhibits slightly tighter dispersion and fewer large residuals, suggesting better stability over time.
+
+- Histogram plots of residuals are approximately symmetric and bell-shaped for both models, supporting normality assumptions.
+
+Autocorrelation (ACF):
+
+- ACF plots for both models show that most residual autocorrelations fall within 95% confidence bounds.
+
+- This implies no significant autocorrelation left unmodeled, an essential sign of a well-fitted model.
+
+Ljung-Box Test (lag = 8):
+
+- arima_fourier6: p-value = 0.80 → Fail to reject the null hypothesis of white noise; residuals are independently distributed.
+
+- arima1: p-value = 0.039 → Slightly below 0.05 threshold; indicates possible autocorrelation in residuals, suggesting the model may not have captured all the structure in the data.
+
+While both models fit the data reasonably well, arima_fourier6 clearly passes the white noise test and displays better-behaved residuals. Therefore, ARIMA with Fourier terms (K=6) is the preferred model for forecasting clothing sales, as it handles seasonality effectively and provides cleaner residuals.
+
+### Furniture and Home Furnishings Stores
+
+#### Train - Test Split
+
+I split the dataset into training and test sets. All data before January 2022 was used for training, while data from January 2022 onwards was reserved for testing. This setup allows for an honest evaluation of the forecasting models’ ability to generalize.
+
+I also visualized the training data across the three variables to observe any discrepancies in trends and seasonality, which helped validate the relationships among these features before fitting time series models.
+
+
+```{r part-13.1, echo=FALSE}
+
+########### Train Test split ###################
+
+us_furniture_cpi_joined <- left_join(
+  us_rs_furniture_stores_cleaned,
+  us_CPI_cleaned,
+  by = "Month"
+)
+
+us_furniture_gtr_joined <- left_join(
+  us_furniture_cpi_joined,
+  google_trend_furniture_cleaned,  # Replace with actual variable name if different
+  by = "Month"
+)
+
+us_rs_furniture_train <- us_furniture_gtr_joined %>%
+  filter(Month < yearmonth("2022-01-01"))
+
+us_rs_furniture_test <- us_furniture_gtr_joined %>%
+  filter(Month >= yearmonth("2022-01-01"))
+
+us_rs_furniture_train %>%
+  pivot_longer(-Month) %>%
+  mutate(name = recode(name,
+                       cpi = "Consumer Price Index (CPI)",
+                       iok_furniture = 'Google Search Trend: "furnish"',  # Change if needed
+                       sales = "Retail Sales: Furniture Stores")) |>
+  ggplot(aes(x = Month, y = value, colour = name)) +
+  geom_line() +
+  facet_grid(name ~ ., scales = "free_y") +
+  labs(title = "Furniture Retail Indicators Over Time",
+       y = "Value", x = "Month", colour = "Indicator")
+
+```
+
+Consumer Price Index (CPI) shows a steady and consistent upward trend from 2000 to 2024, reflecting ongoing inflation over the years.
+
+Google Trends for “furnish” spikes notably after 2015, peaking around 2021, then fluctuating—likely impacted by pandemic recovery patterns and changing consumer behaviors very similar to sales.
+
+Retail Sales exhibit strong seasonality with an upward trend, sharply rising after pandemic.
+
+#### Model Fitting
+
+```{r part-12.2_fuurniture, echo=FALSE}
+
+us_rs_furniture_fit <- us_rs_furniture_train %>%
+  model(
+    fourier6 = TSLM(sales ~ trend() + fourier(K = 6)),
+    ets = ETS(sales),
+    arima012011 = ARIMA(sales ~ pdq(0,1,2) + PDQ(0,1,1)),
+    arima210011 = ARIMA(sales ~ pdq(2,1,0) + PDQ(0,1,1)),
+    arima210110 = ARIMA(sales ~ pdq(2,1,0) + PDQ(1,1,0)),
+    stepwise = ARIMA(sales),
+    arima1 = ARIMA(sales, stepwise = FALSE, approx = FALSE),
+    arima_cpi = ARIMA(sales ~ cpi),
+    arima_google = ARIMA(sales ~ iok_furniture),  # Replace if your column name differs
+    arima_fourier6 = ARIMA(sales ~ fourier(K = 6) + PDQ(0,0,0))
+  )
+
+us_rs_furniture_fit |> 
+  pivot_longer(everything(), names_to = "Model name", values_to = "Orders")
+```
+
+#### {.tabset .tabset-fade .tabset-pills} 
+
+##### AIC Comparison
+
+```{r model_furniture, echo=FALSE}
+
+
+############### AIC - Furniture Stores #################
+glance(us_rs_furniture_fit) |> 
+  arrange(AICc) |> 
+  select(.model:BIC, -r_squared, -adj_r_squared, -statistic, -p_value, -df)
+
+```
+
+I fitted a combination of models including traditional ARIMA configurations, ETS, Fourier-based regression (to capture seasonality), and ARIMA models with external regressors like the Consumer Price Index (CPI) and Google Trends search interest for "furnish".
+
+From the AICc table:
+
+- arima_fourier6 emerged as the best-performing model with the lowest AICc (319.7). This suggests that combining ARIMA with Fourier terms effectively captures both trend and seasonality in furniture sales data.
+
+- arima_cpi and arima012011 followed closely, indicating that CPI contributes meaningful explanatory power, but not enough to outperform Fourier-based seasonality modeling.
+
+- stepwise, arima1, and other ARIMA configurations had moderately higher AICc values, meaning they offer a reasonable fit but lack the robustness of models with explicit seasonal or external features.
+
+- ETS and arima_google had the highest AICc values, implying poor fit. ETS may not capture complex patterns in furniture sales, and in this case, Google search interest in “furniture stores” does not appear to add predictive value—unlike in the food service category.
+
+Models incorporating seasonal structures through Fourier terms provide the best fit for the furniture sales data. External signals like CPI help to some extent, but Google Trends did not contribute significantly in this case. ETS, which performs well on simpler series, falls short here due to the complex patterns likely influenced by macroeconomic and seasonal effects.
+
+###### Forecasts: Top 6 Models Ranked by AICc
+
+```{r model_furniture_forecast, echo=FALSE}
+
+# Step 1: Extract top 6 models by AICc
+top_models_furniture <- glance(us_rs_furniture_fit) %>%
+  arrange(AICc) %>%
+  slice(1:6) %>%
+  pull(.model)
+
+# Step 2: Forecast and plot
+forecast_furniture <- us_rs_furniture_fit %>%
+  select(all_of(top_models_furniture)) %>%
+  forecast(new_data = us_rs_furniture_test) %>%
+  mutate(.model = factor(.model, levels = top_models_furniture))
+
+forecast_furniture %>%
+  autoplot(us_rs_furniture_stores_cleaned, level = 60) +
+  facet_wrap(vars(.model), ncol = 2) +
+  guides(colour = "none", fill = "none", level = "none") +
+  geom_label(
+    aes(
+      x = yearmonth("2018 Jan"),
+      y = max(us_rs_furniture_stores_cleaned$sales, na.rm = TRUE),
+      label = paste0("AICc = ", round(AICc, 1))
+    ),
+    data = glance(us_rs_furniture_fit) %>%
+      filter(.model %in% top_models_furniture) %>%
+      mutate(.model = factor(.model, levels = top_models_furniture))
+  )
+
+```
+
+
+##### Training Data RMSE
+
+```{r model_furniture_rmse, echo=FALSE}
+
+
+############### RMSE - Furniture Stores #################
+us_rs_furniture_fit %>% 
+  accuracy() %>%
+  filter(!is.nan(RMSE)) %>%
+  select(-ME, -MPE, -ACF1, -MASE, -RMSSE) %>%
+  arrange(RMSE)
+
+```
+
+I evaluated all models based on training RMSE to compare how well they fit the historical data.
+
+- arima_fourier6 had the lowest RMSE (0.419), showing strong fit by combining ARIMA with seasonal patterns.
+
+- arima_cpi (RMSE = 0.426) indicates CPI is a valuable predictor for furniture sales.
+
+- Traditional ARIMA models like arima1 and stepwise performed reasonably well (~0.431 RMSE).
+
+- ETS and basic ARIMA variants had slightly higher errors, suggesting weaker fit.
+
+- arima_google showed poor performance (RMSE = 0.648), indicating that Google Trends for furniture may not align well with actual sales.
+
+- fourier6 alone performed the worst (RMSE = 0.992), lacking ARIMA’s ability to handle complex patterns.
+
+Combining ARIMA with seasonal (Fourier) or economic (CPI) indicators improves model accuracy for furniture sales.
+
+###### Forecasts: Top 6 Models Ranked by Training Data RMSE
+
+```{r model_furniture_forecast_rmse, echo=FALSE}
+
+########### Forecast Based on Training RMSE - Furniture Stores #########
+
+# Step 1: Top 6 models based on training RMSE
+top_models_rmse_furniture <- us_rs_furniture_fit %>%
+  accuracy() %>%
+  filter(.type == "Training", !is.nan(RMSE)) %>%
+  arrange(RMSE) %>%
+  slice(1:6) %>%
+  pull(.model)
+
+# Step 2: Combine AICc and RMSE for labels
+label_data_furniture <- glance(us_rs_furniture_fit) %>%
+  filter(.model %in% top_models_rmse_furniture) %>%
+  left_join(
+    us_rs_furniture_fit %>%
+      accuracy() %>%
+      filter(.type == "Training") %>%
+      select(.model, RMSE),
+    by = ".model"
+  ) %>%
+  mutate(
+    .model = factor(.model, levels = top_models_rmse_furniture),
+    label_text = paste0("AICc = ", round(AICc, 1), "\nRMSE = ", round(RMSE, 1))
+  )
+
+# Step 3: Forecast and reorder
+forecast_data_furniture <- us_rs_furniture_fit %>%
+  select(all_of(top_models_rmse_furniture)) %>%
+  forecast(new_data = us_rs_furniture_test) %>%
+  mutate(.model = factor(.model, levels = top_models_rmse_furniture))
+
+# Step 4: Final plot
+forecast_data_furniture %>%
+  autoplot(us_rs_furniture_stores_cleaned, level = 95) +
+  facet_wrap(vars(.model), ncol = 2) +
+  guides(colour = "none", fill = "none", level = "none") +
+  geom_label(
+    data = label_data_furniture,
+    aes(
+      x = min(us_rs_furniture_stores_cleaned$Month),
+      y = max(us_rs_furniture_stores_cleaned$sales, na.rm = TRUE) * 0.98,
+      label = label_text
+    ),
+    inherit.aes = FALSE,
+    size = 3.5,
+    hjust = 0
+  )
+
+```
+
+
+##### Test Data RMSE
+
+```{r model_furniture_rmse_test, echo=FALSE}
+
+############# Test Set - Furniture Stores ###############
+
+bind_rows(
+  us_rs_furniture_fit %>%
+    select(-arima_cpi, -arima_google) %>%
+    forecast(h = "3 years") %>%
+    accuracy(us_rs_furniture_test) %>%
+    filter(!is.nan(RMSE)),
+
+  us_rs_furniture_fit %>%
+    select(arima_cpi, arima_google) %>%
+    forecast(new_data = us_rs_furniture_test) %>%
+    accuracy(us_rs_furniture_test) %>%
+    filter(!is.nan(RMSE))
+) %>%
+  select(.model, .type, RMSE, MAE, MAPE) %>%
+  arrange(RMSE)
+
+```
+
+I evaluated model performance on the test set (2022–2024) using RMSE.
+
+- arima_fourier6 had the lowest test RMSE (0.547), indicating strong generalization by blending seasonality with ARIMA structure.
+
+- arima1 and stepwise (both RMSE = 0.575) also performed well, confirming ARIMA’s reliability without external regressors.
+
+- ETS showed moderate accuracy (RMSE = 0.682), better than most ARIMA variants with fixed orders.
+
+- arima_cpi and arima_google had high RMSEs (1.49 and 1.78), suggesting external regressors like CPI and Google Trends did not generalize well for furniture.
+
+- Basic fourier6 (RMSE = 1.66) failed to capture complex dynamics without ARIMA components.
+
+ARIMA models with Fourier terms generalize best for furniture sales. External regressors such as CPI and Google Trends, while helpful in training, did not hold predictive power in the test set.
+
+###### Forecasts: Top 6 Models Ranked by Test Data RMSE
+
+```{r model_food_furniture_rmse_test, echo=FALSE}
+
+########### Forecast Based on Test RMSE - Furniture #########
+
+# Top 6 models by test RMSE - Furniture
+test_accuracy_furn <- bind_rows(
+  us_rs_furniture_fit %>%
+    select(-arima_cpi, -arima_google) %>%   
+    forecast(h = "3 years") %>%
+    accuracy(us_rs_furniture_test) %>%
+    filter(!is.nan(RMSE)),
+  us_rs_furniture_fit %>%
+    select(arima_cpi, arima_google) %>%   
+    forecast(new_data = us_rs_furniture_test) %>%
+    accuracy(us_rs_furniture_test) %>%
+    filter(!is.nan(RMSE))
+)
+
+top_rmse_models_furn <- test_accuracy_furn %>%
+  select(.model, RMSE) %>%
+  arrange(RMSE) %>%
+  slice(1:6) %>%
+  pull(.model)
+
+forecast_data_furn <- us_rs_furniture_fit %>%
+  select(all_of(top_rmse_models_furn)) %>%
+  forecast(new_data = us_rs_furniture_test) %>%
+  mutate(.model = factor(.model, levels = top_rmse_models_furn))
+
+aic_labels_furn <- glance(us_rs_furniture_fit) %>%
+  filter(.model %in% top_rmse_models_furn) %>%
+  select(.model, AICc)
+
+labels_df_furn <- test_accuracy_furn %>%
+  filter(.model %in% top_rmse_models_furn) %>%
+  left_join(aic_labels_furn, by = ".model") %>%
+  left_join(
+    us_rs_furniture_fit %>%
+      accuracy() %>%
+      filter(.type == "Training") %>%
+      select(.model, train_RMSE = RMSE),
+    by = ".model"
+  ) %>%
+  mutate(
+    .model = factor(.model, levels = top_rmse_models_furn),
+    label_text = paste0("AICc = ", round(AICc, 1),
+                        "\nTrain RMSE = ", round(train_RMSE, 1),
+                        "\nTest RMSE = ", round(RMSE, 1))
+  )
+
+forecast_data_furn %>%
+  autoplot(us_rs_furniture_stores_cleaned, level = 95) +
+  facet_wrap(vars(.model), ncol = 2) +
+  guides(colour = "none", fill = "none", level = "none") +
+  geom_label(
+    data = labels_df_furn,
+    aes(
+      x = yearmonth("2001 Jan"),
+      y = max(us_rs_furniture_stores_cleaned$sales, na.rm = TRUE),
+      label = label_text
+    ),
+    inherit.aes = FALSE,
+    hjust = 0,
+    vjust = 1,
+    size = 3
+  ) +
+  labs(
+    title = "3-Year Forecast: Top 6 Models by Test RMSE (Furniture Sector)",
+    y = "Sales (in billions)",
+    x = "Month"
+  )
+
+```
+
+#### Evaluation of ARIMA Models with and without Google Trends
+
+To visualize how the leading models behave in practice, I generated forecasts from the top two performers based on Test RMSE — arima_fourier6 and arima1. These were not selected to compete, but to provide a clearer picture of how well each model captures retail sales patterns. I also assessed their residuals and Ljung-Box statistics to confirm model adequacy.
+
+```{r model_furniture_final_model, echo=FALSE}
+
+# clearly arima_fourier6 trend seems to be a better model with low AICc, and Training and Test RMSE
+
+# Forecast using ARIMA with Google Trend
+us_rs_furniture_fcst_arima_fourier6<- us_rs_furniture_fit %>% 
+  select(arima_fourier6) %>%
+  forecast(new_data = us_rs_furniture_test)
+
+autoplot(us_rs_furniture_fcst_arima_fourier6) +
+  autolayer(us_rs_furniture_stores_cleaned) +
+  labs(
+    title = "Retail Sales Forecast (Furniture) with ARIMA - Fourier6",
+    y = "Sales (in billions)", x = "Month"
+  )
+
+# Forecast using full ARIMA model
+us_rs_furniture_fcst_arima1 <- us_rs_furniture_fit %>% 
+  select(arima1) %>%
+  forecast(h = "3 years")
+
+autoplot(us_rs_furniture_fcst_arima1) +
+  autolayer(us_rs_furniture_stores_cleaned) +
+  labs(
+    title = "Retail Sales Forecast (Furniture) with ARIMA",
+    y = "Sales (in billions)", x = "Month"
+  )
+
+# Residual plots
+us_rs_furniture_fit |> select(arima_fourier6) |> gg_tsresiduals(lag = 36) +
+  ggtitle("Residuals: Furniture Sales ARIMA - Fourier (K = 6)")
+
+us_rs_furniture_fit |> select(arima1) |> gg_tsresiduals(lag = 36) +
+  ggtitle("Residuals: Furniture Sales ARIMA")
+
+# Forecast accuracy
+bind_rows(
+  us_rs_furniture_fit %>% select(arima_fourier6) %>% accuracy(),
+  us_rs_furniture_fit %>% select(arima1) %>% accuracy(),
+  us_rs_furniture_fit %>% select(arima_fourier6) %>% forecast(new_data = us_rs_furniture_test) %>% accuracy(us_rs_furniture_test),
+  us_rs_furniture_fit %>% select(arima1) %>% forecast(h = "3 years") %>% accuracy(us_rs_furniture_test)
+) %>%
+  select(-ME, -MPE, -ACF1, -MASE, -RMSSE)
+
+# Ljung-Box test
+bind_rows(
+  augment(us_rs_furniture_fit %>% select(arima_fourier6)) |> features(.innov, ljung_box, lag = 8),
+  augment(us_rs_furniture_fit %>% select(arima1)) |> features(.innov, ljung_box, dof = 3, lag = 8)
+)
+
+```
+
+Both models show good residual behavior:
+
+- Residuals are centered around zero for both models, with no clear patterns—suggesting a good fit.
+
+- ACF plots indicate that most lags fall within 95% bounds, implying residuals are not autocorrelated.
+
+- Histograms appear roughly bell-shaped, supporting the assumption of normality.
+
+- Ljung-Box test (lag = 8):
+
+- arima_fourier6: p = 0.583
+
+- arima1: p = 0.368
+
+- Both p-values are high, confirming that residuals behave like white noise.
+
+While both models are valid, arima_fourier6 outperforms arima1 in both training and test RMSE, making it the preferred model for forecasting furniture sales.
+
+
+## Key Findings
+
+Retail Trade & Food Services:
+
+- ARIMA with Google Trends ("restaurants") was the top performer on both AICc and test RMSE. This model captured consumer interest effectively, showing strong predictive power for sales.
+
+Clothing Stores:
+
+- ARIMA1 (standard) and Fourier-enhanced ARIMA yielded the best generalization to the test set. Google Trends for "clothing" did not improve forecasts as significantly, and CPI models performed inconsistently.
+
+Furniture & Home Furnishings Stores:
+
+- ARIMA + Fourier terms was the best model across training and test sets. Google Trends for "furnish" and CPI regressors underperformed, indicating limited external signal strength for this category.
+
+CPI & Google Trends:
+
+- While Google Trends was highly effective for food-related sales, its relevance varied by category. CPI improved model fit modestly in training but often failed to generalize well to test data.
+
+Residual Diagnostics:
+
+- Top models in each category passed key checks—residuals were centered around zero, ACF showed no strong autocorrelation, and Ljung-Box p-values confirmed residuals resembled white noise.
+
+
+## Conclusion
+
+The analysis demonstrates that model performance is highly domain-specific. While ARIMA models with external regressors like Google Trends excel in categories with strong online consumer behavior (e.g., food services), Fourier terms and plain ARIMA models remain robust choices in more stable or less search-driven domains like furniture.
+
+This analysis illustrates the value of combining traditional time series modeling with publicly available external signals. When carefully aligned by domain, such features can enhance forecasting accuracy and generate actionable insights into U.S. consumer market trends.
+
+## Limitations and Next Steps
+
+- Future work could include more granular data (e.g., weekly sales).
+
+- Explore VAR models or machine learning methods.
+
+- Expand Google Trends coverage to include product-level terms or broader categories.
