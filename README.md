@@ -31,6 +31,9 @@ Data retrieved from [FRED](https://fred.stlouisfed.org).
 - [`Retail_Sales_Time_series_forecasting - Log Transformed.Rmd`](scripts/Retail_Sales_Time_series_forecasting%20-%20Log%20Transformed.Rmd): Log-transformed version for variance stabilization
 - [`Retail_Sales_Time_series_forecasting_Outlook_Report.Rmd`](scripts/Retail_Sales_Time_series_forecasting_Outlook_Report.Rmd): Outlook-friendly RMD for sharing results
 
+- ![R](https://img.shields.io/badge/language-R-blue.svg)
+
+
 ### 📁 Other Folders
 - `data/`: Contains input data files for Google Trend
 - `reports/`: Rendered `.html` outputs and visual reports
